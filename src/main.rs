@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat, ord_characters, chr_from_codepoints, bin2hex, hex2bin, HexFormat as LibHexFormat};
+use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat, ord_characters, chr_from_codepoints, bin2hex, hex2bin, HexFormat as LibHexFormat, scrub_invalid_utf8, InputFormat as LibInputFormat};
 
 #[derive(Parser)]
 #[command(name = "mojibox")]
@@ -116,6 +116,15 @@ enum Commands {
         /// Hexadecimal input (supports various formats)
         hex_input: String,
     },
+    /// Replace invalid UTF-8 sequences with replacement character (U+FFFD)
+    Scrub {
+        /// Input format
+        #[arg(long, default_value = "binary")]
+        input_format: InputFormat,
+        
+        /// Input data to scrub
+        input: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -154,6 +163,14 @@ enum HexFormat {
     Spaced,
     /// Escaped format with \x prefix
     Escaped,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum InputFormat {
+    /// Binary data format
+    Binary,
+    /// Hexadecimal format
+    Hex,
 }
 
 fn main() -> Result<()> {
@@ -204,6 +221,9 @@ fn main() -> Result<()> {
         }
         Commands::Hex2bin { hex_input } => {
             handle_hex2bin(hex_input)?;
+        }
+        Commands::Scrub { input_format, input } => {
+            handle_scrub(input_format, input)?;
         }
     }
 
@@ -316,6 +336,16 @@ fn handle_bin2hex(lower: bool, format: HexFormat, input: String) -> Result<()> {
 
 fn handle_hex2bin(hex_input: String) -> Result<()> {
     let result = hex2bin(&hex_input)?;
+    println!("{}", result);
+    Ok(())
+}
+
+fn handle_scrub(input_format: InputFormat, input: String) -> Result<()> {
+    let lib_format = match input_format {
+        InputFormat::Binary => LibInputFormat::Binary,
+        InputFormat::Hex => LibInputFormat::Hex,
+    };
+    let result = scrub_invalid_utf8(&input, lib_format)?;
     println!("{}", result);
     Ok(())
 }

@@ -285,6 +285,55 @@ pub fn hex2bin(hex_input: &str) -> Result<String> {
     Ok(result)
 }
 
+#[derive(Debug, Clone)]
+pub enum InputFormat {
+    Binary,
+    Hex,
+}
+
+pub fn scrub_invalid_utf8(input: &str, format: InputFormat) -> Result<String> {
+    let bytes = match format {
+        InputFormat::Binary => {
+            // Treat input as binary data (UTF-8 bytes)
+            input.as_bytes().to_vec()
+        }
+        InputFormat::Hex => {
+            // Parse as hexadecimal string (similar to hex2bin)
+            let cleaned_input = if input.starts_with("\\x") {
+                // Handle escaped format: \xF0\x9F\x8D\xA3
+                input.replace("\\x", "")
+            } else if input.contains(' ') {
+                // Handle spaced format: F0 9F 8D A3
+                input.replace(' ', "")
+            } else {
+                // Handle default format: F09F8DA3
+                input.to_string()
+            };
+
+            if cleaned_input.is_empty() {
+                return Ok(String::new());
+            }
+
+            if cleaned_input.len() % 2 != 0 {
+                return Err(anyhow::anyhow!("Invalid hex input: odd number of characters"));
+            }
+
+            let mut bytes = Vec::new();
+            for i in (0..cleaned_input.len()).step_by(2) {
+                let hex_pair = &cleaned_input[i..i+2];
+                let byte = u8::from_str_radix(hex_pair, 16)
+                    .map_err(|_| anyhow::anyhow!("Invalid hex character in: {}", hex_pair))?;
+                bytes.push(byte);
+            }
+            bytes
+        }
+    };
+
+    // Use from_utf8_lossy to replace invalid UTF-8 sequences with U+FFFD
+    let result = String::from_utf8_lossy(&bytes).into_owned();
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,5 +796,106 @@ mod tests {
         let hex = bin2hex(original, false, HexFormat::Default).unwrap();
         let restored = hex2bin(&hex).unwrap();
         assert_eq!(original, restored);
+    }
+
+    // Tests for scrub_invalid_utf8 function
+    #[test]
+    fn test_scrub_valid_utf8() {
+        let result = scrub_invalid_utf8("Hello, 世界! 🍣", InputFormat::Binary).unwrap();
+        assert_eq!(result, "Hello, 世界! 🍣");
+    }
+
+    #[test]
+    fn test_scrub_incomplete_sushi_emoji() {
+        // 🍣 is F0 9F 8D A3, but F0 9F 8D is incomplete
+        let result = scrub_invalid_utf8("F09F8D", InputFormat::Hex).unwrap();
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_scrub_valid_emoji_plus_invalid_byte() {
+        // 🍣 (F0 9F 8D A3) + invalid byte FF
+        let result = scrub_invalid_utf8("F09F8DA3FF", InputFormat::Hex).unwrap();
+        assert_eq!(result, "🍣�");
+    }
+
+    #[test]
+    fn test_scrub_overlong_encoding() {
+        // C0 80 is overlong encoding of null byte
+        let result = scrub_invalid_utf8("C080", InputFormat::Hex).unwrap();
+        assert_eq!(result, "��");
+    }
+
+    #[test]
+    fn test_scrub_multiple_invalid_sequences() {
+        // Multiple invalid sequences
+        let result = scrub_invalid_utf8("F09F8D F09F8DA3 FF C080", InputFormat::Hex).unwrap();
+        assert_eq!(result, "�🍣���");
+    }
+
+    #[test]
+    fn test_scrub_escaped_hex_format() {
+        // Escaped format with incomplete emoji
+        let result = scrub_invalid_utf8("\\xF0\\x9F\\x8D", InputFormat::Hex).unwrap();
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_scrub_spaced_hex_format() {
+        // Spaced format with incomplete emoji
+        let result = scrub_invalid_utf8("F0 9F 8D", InputFormat::Hex).unwrap();
+        assert_eq!(result, "�");
+    }
+
+
+    #[test]
+    fn test_scrub_empty_input() {
+        let result = scrub_invalid_utf8("", InputFormat::Binary).unwrap();
+        assert_eq!(result, "");
+        
+        let result = scrub_invalid_utf8("", InputFormat::Hex).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_scrub_invalid_hex_format() {
+        // Invalid hex characters should cause error
+        let result = scrub_invalid_utf8("GG", InputFormat::Hex);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scrub_odd_length_hex() {
+        // Odd length hex should cause error
+        let result = scrub_invalid_utf8("F0F", InputFormat::Hex);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scrub_various_invalid_sequences() {
+        // Test various invalid UTF-8 sequences
+        let test_cases = vec![
+            ("80", "�"),           // Continuation byte without start
+            ("C0", "�"),           // Incomplete 2-byte sequence
+            ("E0", "�"),           // Incomplete 3-byte sequence
+            ("F0", "�"),           // Incomplete 4-byte sequence
+            ("FE", "�"),           // Invalid start byte
+            ("FF", "�"),           // Invalid start byte
+            ("C0C0", "��"),        // Two invalid bytes
+            ("E080", "��"),        // Invalid 3-byte sequence
+            ("F08080", "���"),     // Invalid 4-byte sequence
+        ];
+
+        for (input, expected) in test_cases {
+            let result = scrub_invalid_utf8(input, InputFormat::Hex).unwrap();
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_scrub_mixed_valid_invalid() {
+        // Test mixing valid and invalid UTF-8
+        let result = scrub_invalid_utf8("48656C6C6F FF 576F726C64", InputFormat::Hex).unwrap();
+        assert_eq!(result, "Hello�World");
     }
 }

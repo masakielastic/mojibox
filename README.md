@@ -39,6 +39,9 @@ mojibox bin2hex "🍣"
 
 # Convert hexadecimal back to string
 mojibox hex2bin "F09F8DA3"
+
+# Scrub invalid UTF-8 sequences
+mojibox scrub --input-format hex "F09F8D"
 ```
 
 ### Command Options
@@ -67,6 +70,11 @@ mojibox hex2bin "F09F8DA3"
 
 #### hex2bin command
 - Automatically detects input format (continuous, spaced, or escaped)
+
+#### scrub command
+- `--input-format`: Input format
+  - `binary` - Binary data format (default)
+  - `hex` - Hexadecimal format
 
 ### Examples
 
@@ -195,6 +203,29 @@ $ mojibox bin2hex "🍣" | mojibox hex2bin
 🍣
 ```
 
+#### Invalid UTF-8 Sequence Scrubbing
+```bash
+# Scrub invalid UTF-8 from hex data (incomplete emoji)
+$ mojibox scrub --input-format hex "F09F8D"
+�
+
+# Scrub valid emoji + invalid byte
+$ mojibox scrub --input-format hex "F09F8DA3FF"
+🍣�
+
+# Scrub overlong encoding
+$ mojibox scrub --input-format hex "C080"
+��
+
+# Scrub valid UTF-8 text (no changes, binary format is default)
+$ mojibox scrub "Hello, 世界!"
+Hello, 世界!
+
+# Mixed valid and invalid UTF-8
+$ mojibox scrub --input-format hex "48656C6C6F FF 576F726C64"
+Hello�World
+```
+
 ## Features
 
 - **Accurate Unicode handling**: Uses ICU4X for precise grapheme cluster segmentation
@@ -202,6 +233,7 @@ $ mojibox bin2hex "🍣" | mojibox hex2bin
 - **Flexible processing modes**: Choose between grapheme, codepoint, or byte-level processing
 - **Unicode analysis**: Comprehensive dump command for analyzing Unicode structure with multiple output formats
 - **Binary/Hex conversion**: Convert strings to hexadecimal representation and back with multiple output formats
+- **UTF-8 validation and repair**: Scrub invalid UTF-8 sequences and replace them with replacement characters
 - **Command-line interface**: Simple and intuitive CLI with clap argument parsing
 
 ## Development
