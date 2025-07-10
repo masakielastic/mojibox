@@ -33,6 +33,12 @@ mojibox iter --mode byte "hello"
 
 # Analyze Unicode structure of text
 mojibox dump "あいう🍣👨‍💻"
+
+# Convert string to hexadecimal
+mojibox bin2hex "🍣"
+
+# Convert hexadecimal back to string
+mojibox hex2bin "F09F8DA3"
 ```
 
 ### Command Options
@@ -51,6 +57,16 @@ mojibox dump "あいう🍣👨‍💻"
   - `text` - Human-readable text format (default)
   - `json` - JSON format
   - `jsonl` - JSON Lines format
+
+#### bin2hex command
+- `--lower`: Use lowercase hex format
+- `--format`, `-f`: Output format
+  - `default` - Continuous hex string (default)
+  - `spaced` - Space-separated hex bytes
+  - `escaped` - Escaped format with \x prefix
+
+#### hex2bin command
+- Automatically detects input format (continuous, spaced, or escaped)
 
 ### Examples
 
@@ -141,12 +157,51 @@ $ mojibox dump --format json "👨‍💻"
 ]
 ```
 
+#### Binary to Hexadecimal Conversion
+```bash
+# Default format (uppercase, continuous)
+$ mojibox bin2hex "🍣"
+F09F8DA3
+
+# Lowercase format
+$ mojibox bin2hex --lower "🍣"
+f09f8da3
+
+# Space-separated format
+$ mojibox bin2hex --format spaced "🍣"
+F0 9F 8D A3
+
+# Escaped format
+$ mojibox bin2hex --format escaped "🍣"
+\xF0\x9F\x8D\xA3
+```
+
+#### Hexadecimal to Binary Conversion
+```bash
+# Default format
+$ mojibox hex2bin "F09F8DA3"
+🍣
+
+# Space-separated format
+$ mojibox hex2bin "F0 9F 8D A3"
+🍣
+
+# Escaped format
+$ mojibox hex2bin "\xF0\x9F\x8D\xA3"
+🍣
+
+# Roundtrip conversion
+$ mojibox bin2hex "🍣" | mojibox hex2bin
+🍣
+```
+
 ## Features
 
 - **Accurate Unicode handling**: Uses ICU4X for precise grapheme cluster segmentation
 - **Multi-language support**: Handles Japanese, emoji, and combining characters correctly
 - **Flexible processing modes**: Choose between grapheme, codepoint, or byte-level processing
 - **Unicode analysis**: Comprehensive dump command for analyzing Unicode structure with multiple output formats
+- **Binary/Hex conversion**: Convert strings to hexadecimal representation and back with multiple output formats
 - **Command-line interface**: Simple and intuitive CLI with clap argument parsing
 
 ## Development

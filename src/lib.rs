@@ -231,6 +231,60 @@ pub fn chr_from_codepoints(codepoints: &[String]) -> Result<String> {
     Ok(result)
 }
 
+#[derive(Debug, Clone)]
+pub enum HexFormat {
+    Default,
+    Spaced,
+    Escaped,
+}
+
+pub fn bin2hex(input: &str, lowercase: bool, format: HexFormat) -> Result<String> {
+    let bytes = input.as_bytes();
+    let hex_chars: Vec<String> = bytes.iter().map(|byte| {
+        if lowercase {
+            format!("{:02x}", byte)
+        } else {
+            format!("{:02X}", byte)
+        }
+    }).collect();
+
+    match format {
+        HexFormat::Default => Ok(hex_chars.join("")),
+        HexFormat::Spaced => Ok(hex_chars.join(" ")),
+        HexFormat::Escaped => Ok(hex_chars.iter().map(|h| format!("\\x{}", h)).collect::<Vec<_>>().join("")),
+    }
+}
+
+pub fn hex2bin(hex_input: &str) -> Result<String> {
+    let cleaned_input = if hex_input.starts_with("\\x") {
+        // Handle escaped format: \xF0\x9F\x8D\xA3
+        hex_input.replace("\\x", "")
+    } else if hex_input.contains(' ') {
+        // Handle spaced format: F0 9F 8D A3
+        hex_input.replace(' ', "")
+    } else {
+        // Handle default format: F09F8DA3
+        hex_input.to_string()
+    };
+
+    if cleaned_input.len() % 2 != 0 {
+        return Err(anyhow::anyhow!("Invalid hex input: odd number of characters"));
+    }
+
+    let mut bytes = Vec::new();
+    for i in (0..cleaned_input.len()).step_by(2) {
+        let hex_pair = &cleaned_input[i..i+2];
+        let byte = u8::from_str_radix(hex_pair, 16)
+            .map_err(|_| anyhow::anyhow!("Invalid hex character in: {}", hex_pair))?;
+        bytes.push(byte);
+    }
+
+    let result = String::from_utf8(bytes)
+        .map_err(|_| anyhow::anyhow!("Invalid UTF-8 sequence"))?;
+    
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,5 +622,130 @@ mod tests {
     fn test_dump_empty_string() {
         let result = dump_graphemes("", DumpFormat::Text).unwrap();
         assert_eq!(result, "");
+    }
+
+    // Tests for bin2hex function
+    #[test]
+    fn test_bin2hex_default_format() {
+        let result = bin2hex("🍣", false, HexFormat::Default).unwrap();
+        assert_eq!(result, "F09F8DA3");
+    }
+
+    #[test]
+    fn test_bin2hex_lowercase() {
+        let result = bin2hex("🍣", true, HexFormat::Default).unwrap();
+        assert_eq!(result, "f09f8da3");
+    }
+
+    #[test]
+    fn test_bin2hex_spaced_format() {
+        let result = bin2hex("🍣", false, HexFormat::Spaced).unwrap();
+        assert_eq!(result, "F0 9F 8D A3");
+    }
+
+    #[test]
+    fn test_bin2hex_escaped_format() {
+        let result = bin2hex("🍣", false, HexFormat::Escaped).unwrap();
+        assert_eq!(result, "\\xF0\\x9F\\x8D\\xA3");
+    }
+
+    #[test]
+    fn test_bin2hex_ascii() {
+        let result = bin2hex("ABC", false, HexFormat::Default).unwrap();
+        assert_eq!(result, "414243");
+    }
+
+    #[test]
+    fn test_bin2hex_empty_string() {
+        let result = bin2hex("", false, HexFormat::Default).unwrap();
+        assert_eq!(result, "");
+    }
+
+    // Tests for hex2bin function
+    #[test]
+    fn test_hex2bin_default_format() {
+        let result = hex2bin("F09F8DA3").unwrap();
+        assert_eq!(result, "🍣");
+    }
+
+    #[test]
+    fn test_hex2bin_spaced_format() {
+        let result = hex2bin("F0 9F 8D A3").unwrap();
+        assert_eq!(result, "🍣");
+    }
+
+    #[test]
+    fn test_hex2bin_escaped_format() {
+        let result = hex2bin("\\xF0\\x9F\\x8D\\xA3").unwrap();
+        assert_eq!(result, "🍣");
+    }
+
+    #[test]
+    fn test_hex2bin_lowercase() {
+        let result = hex2bin("f09f8da3").unwrap();
+        assert_eq!(result, "🍣");
+    }
+
+    #[test]
+    fn test_hex2bin_ascii() {
+        let result = hex2bin("414243").unwrap();
+        assert_eq!(result, "ABC");
+    }
+
+    #[test]
+    fn test_hex2bin_empty_string() {
+        let result = hex2bin("").unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hex2bin_invalid_hex() {
+        let result = hex2bin("GG");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hex2bin_odd_length() {
+        let result = hex2bin("F0F");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hex2bin_invalid_utf8() {
+        let result = hex2bin("FF");
+        assert!(result.is_err());
+    }
+
+    // Roundtrip tests
+    #[test]
+    fn test_roundtrip_default() {
+        let original = "🍣🍺漢字";
+        let hex = bin2hex(original, false, HexFormat::Default).unwrap();
+        let restored = hex2bin(&hex).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn test_roundtrip_spaced() {
+        let original = "🍣🍺漢字";
+        let hex = bin2hex(original, false, HexFormat::Spaced).unwrap();
+        let restored = hex2bin(&hex).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn test_roundtrip_escaped() {
+        let original = "🍣🍺漢字";
+        let hex = bin2hex(original, false, HexFormat::Escaped).unwrap();
+        let restored = hex2bin(&hex).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn test_roundtrip_ascii() {
+        let original = "Hello, World!";
+        let hex = bin2hex(original, false, HexFormat::Default).unwrap();
+        let restored = hex2bin(&hex).unwrap();
+        assert_eq!(original, restored);
     }
 }

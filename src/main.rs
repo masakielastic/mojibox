@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat, ord_characters, chr_from_codepoints};
+use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat, ord_characters, chr_from_codepoints, bin2hex, hex2bin, HexFormat as LibHexFormat};
 
 #[derive(Parser)]
 #[command(name = "mojibox")]
@@ -98,6 +98,24 @@ enum Commands {
         /// Unicode codepoints in hex format (with or without 0x prefix)
         codepoints: Vec<String>,
     },
+    /// Convert string to hexadecimal representation
+    Bin2hex {
+        /// Use lowercase hex format
+        #[arg(long)]
+        lower: bool,
+        
+        /// Output format
+        #[arg(short, long, default_value = "default")]
+        format: HexFormat,
+        
+        /// Input string to process
+        input: String,
+    },
+    /// Convert hexadecimal representation to string
+    Hex2bin {
+        /// Hexadecimal input (supports various formats)
+        hex_input: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -126,6 +144,16 @@ enum OutputFormat {
     Json,
     /// JSON Lines format
     Jsonl,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum HexFormat {
+    /// Default format (continuous hex string)
+    Default,
+    /// Space-separated format
+    Spaced,
+    /// Escaped format with \x prefix
+    Escaped,
 }
 
 fn main() -> Result<()> {
@@ -170,6 +198,12 @@ fn main() -> Result<()> {
         }
         Commands::Chr { codepoints } => {
             handle_chr(codepoints)?;
+        }
+        Commands::Bin2hex { lower, format, input } => {
+            handle_bin2hex(lower, format, input)?;
+        }
+        Commands::Hex2bin { hex_input } => {
+            handle_hex2bin(hex_input)?;
         }
     }
 
@@ -265,6 +299,23 @@ fn handle_ord(lower: bool, no_0x: bool, input: String) -> Result<()> {
 
 fn handle_chr(codepoints: Vec<String>) -> Result<()> {
     let result = chr_from_codepoints(&codepoints)?;
+    println!("{}", result);
+    Ok(())
+}
+
+fn handle_bin2hex(lower: bool, format: HexFormat, input: String) -> Result<()> {
+    let lib_format = match format {
+        HexFormat::Default => LibHexFormat::Default,
+        HexFormat::Spaced => LibHexFormat::Spaced,
+        HexFormat::Escaped => LibHexFormat::Escaped,
+    };
+    let result = bin2hex(&input, lower, lib_format)?;
+    println!("{}", result);
+    Ok(())
+}
+
+fn handle_hex2bin(hex_input: String) -> Result<()> {
+    let result = hex2bin(&hex_input)?;
     println!("{}", result);
     Ok(())
 }
