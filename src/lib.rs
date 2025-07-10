@@ -334,6 +334,159 @@ pub fn scrub_invalid_utf8(input: &str, format: InputFormat) -> Result<String> {
     Ok(result)
 }
 
+#[derive(Debug, Clone)]
+pub enum EscapeFormat {
+    Default,
+    Json,
+}
+
+pub fn escape_unicode(input: &str) -> String {
+    escape_unicode_with_format(input, EscapeFormat::Default)
+}
+
+pub fn escape_unicode_with_format(input: &str, format: EscapeFormat) -> String {
+    match format {
+        EscapeFormat::Default => {
+            input.chars()
+                .map(|ch| format!("\\u{{{:X}}}", ch as u32))
+                .collect::<Vec<_>>()
+                .join("")
+        }
+        EscapeFormat::Json => {
+            input.chars()
+                .flat_map(|ch| {
+                    let code_point = ch as u32;
+                    if code_point <= 0xFFFF {
+                        // BMP character - single \uXXXX
+                        vec![format!("\\u{:04X}", code_point)]
+                    } else {
+                        // Supplementary character - surrogate pair
+                        let adjusted = code_point - 0x10000;
+                        let high = 0xD800 + (adjusted >> 10);
+                        let low = 0xDC00 + (adjusted & 0x3FF);
+                        vec![format!("\\u{:04X}", high), format!("\\u{:04X}", low)]
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        }
+    }
+}
+
+pub fn unescape_unicode(input: &str) -> String {
+    let mut result = String::new();
+    let mut remaining = input;
+    
+    while !remaining.is_empty() {
+        if let Some(rest) = remaining.strip_prefix("\\u{") {
+            // Handle \u{...} format
+            if let Some(close_pos) = rest.find('}') {
+                let hex_part = &rest[..close_pos];
+                remaining = &rest[close_pos + 1..];
+                
+                if hex_part.is_empty() {
+                    result.push('\u{FFFD}');
+                } else if hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+                    match u32::from_str_radix(hex_part, 16) {
+                        Ok(code_point) => {
+                            if let Some(unicode_char) = char::from_u32(code_point) {
+                                result.push(unicode_char);
+                            } else {
+                                result.push('\u{FFFD}');
+                            }
+                        }
+                        Err(_) => {
+                            result.push('\u{FFFD}');
+                        }
+                    }
+                } else {
+                    result.push('\u{FFFD}');
+                }
+            } else {
+                // No closing brace found - consume all remaining characters
+                result.push('\u{FFFD}');
+                remaining = "";
+            }
+        } else if let Some(rest) = remaining.strip_prefix("\\u") {
+            // Handle \uXXXX format
+            if rest.len() >= 4 && rest.chars().take(4).all(|c| c.is_ascii_hexdigit()) {
+                let hex_part = &rest[..4];
+                remaining = &rest[4..];
+                
+                match u16::from_str_radix(hex_part, 16) {
+                    Ok(code_unit) => {
+                        // Handle surrogate pairs
+                        if (0xD800..=0xDBFF).contains(&code_unit) {
+                            // High surrogate - look for low surrogate
+                            if let Some(low_rest) = remaining.strip_prefix("\\u") {
+                                if low_rest.len() >= 4 && low_rest.chars().take(4).all(|c| c.is_ascii_hexdigit()) {
+                                    let low_hex = &low_rest[..4];
+                                    match u16::from_str_radix(low_hex, 16) {
+                                        Ok(low_surrogate) => {
+                                            if (0xDC00..=0xDFFF).contains(&low_surrogate) {
+                                                // Valid surrogate pair
+                                                let code_point = 0x10000 + ((code_unit as u32 - 0xD800) << 10) + (low_surrogate as u32 - 0xDC00);
+                                                if let Some(unicode_char) = char::from_u32(code_point) {
+                                                    result.push(unicode_char);
+                                                    remaining = &low_rest[4..];
+                                                } else {
+                                                    result.push('\u{FFFD}');
+                                                }
+                                            } else {
+                                                // Invalid low surrogate
+                                                result.push('\u{FFFD}');
+                                                result.push('\u{FFFD}');
+                                                remaining = &low_rest[4..];
+                                            }
+                                        }
+                                        Err(_) => {
+                                            // Invalid hex in low surrogate
+                                            result.push('\u{FFFD}');
+                                            result.push('\u{FFFD}');
+                                            remaining = &low_rest[4..];
+                                        }
+                                    }
+                                } else {
+                                    // Incomplete low surrogate
+                                    result.push('\u{FFFD}');
+                                }
+                            } else {
+                                // No low surrogate after high surrogate
+                                result.push('\u{FFFD}');
+                            }
+                        } else if (0xDC00..=0xDFFF).contains(&code_unit) {
+                            // Lone low surrogate
+                            result.push('\u{FFFD}');
+                        } else {
+                            // Regular BMP character
+                            if let Some(unicode_char) = char::from_u32(code_unit as u32) {
+                                result.push(unicode_char);
+                            } else {
+                                result.push('\u{FFFD}');
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Invalid hex format
+                        result.push('\u{FFFD}');
+                    }
+                }
+            } else {
+                // Incomplete \uXXXX sequence
+                result.push('\u{FFFD}');
+                remaining = rest;
+            }
+        } else {
+            // Regular character or non-unicode escape
+            let ch = remaining.chars().next().unwrap();
+            result.push(ch);
+            remaining = &remaining[ch.len_utf8()..];
+        }
+    }
+    
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,5 +1050,269 @@ mod tests {
         // Test mixing valid and invalid UTF-8
         let result = scrub_invalid_utf8("48656C6C6F FF 576F726C64", InputFormat::Hex).unwrap();
         assert_eq!(result, "Hello�World");
+    }
+
+    // Tests for escape_unicode function
+    #[test]
+    fn test_escape_unicode_basic() {
+        let result = escape_unicode("🍣🍺");
+        assert_eq!(result, "\\u{1F363}\\u{1F37A}");
+    }
+
+    #[test]
+    fn test_escape_unicode_ascii() {
+        let result = escape_unicode("ABC");
+        assert_eq!(result, "\\u{41}\\u{42}\\u{43}");
+    }
+
+    #[test]
+    fn test_escape_unicode_japanese() {
+        let result = escape_unicode("漢字");
+        assert_eq!(result, "\\u{6F22}\\u{5B57}");
+    }
+
+    #[test]
+    fn test_escape_unicode_empty() {
+        let result = escape_unicode("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_escape_unicode_mixed() {
+        let result = escape_unicode("A🍣B");
+        assert_eq!(result, "\\u{41}\\u{1F363}\\u{42}");
+    }
+
+    // Tests for unescape_unicode function
+    #[test]
+    fn test_unescape_unicode_basic() {
+        let result = unescape_unicode("\\u{1F363}\\u{1F37A}");
+        assert_eq!(result, "🍣🍺");
+    }
+
+    #[test]
+    fn test_unescape_unicode_ascii() {
+        let result = unescape_unicode("\\u{41}\\u{42}\\u{43}");
+        assert_eq!(result, "ABC");
+    }
+
+    #[test]
+    fn test_unescape_unicode_japanese() {
+        let result = unescape_unicode("\\u{6F22}\\u{5B57}");
+        assert_eq!(result, "漢字");
+    }
+
+    #[test]
+    fn test_unescape_unicode_empty() {
+        let result = unescape_unicode("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_unescape_unicode_mixed() {
+        let result = unescape_unicode("\\u{41}\\u{1F363}\\u{42}");
+        assert_eq!(result, "A🍣B");
+    }
+
+    #[test]
+    fn test_unescape_unicode_4digit_format() {
+        let result = unescape_unicode("\\u0041\\u0042\\u0043");
+        assert_eq!(result, "ABC");
+    }
+
+    #[test]
+    fn test_unescape_unicode_surrogate_pair_valid() {
+        // Valid surrogate pair for 🍣 (U+1F363)
+        let result = unescape_unicode("\\uD83C\\uDF63");
+        assert_eq!(result, "🍣");
+    }
+
+    #[test]
+    fn test_unescape_unicode_surrogate_pair_reversed() {
+        // Reversed surrogate pair should produce replacement characters
+        let result = unescape_unicode("\\uDF63\\uD83C");
+        assert_eq!(result, "��");
+    }
+
+    #[test]
+    fn test_unescape_unicode_lone_high_surrogate() {
+        // Lone high surrogate should produce replacement character
+        let result = unescape_unicode("\\uD83C");
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_unescape_unicode_lone_low_surrogate() {
+        // Lone low surrogate should produce replacement character
+        let result = unescape_unicode("\\uDF63");
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_unescape_unicode_invalid_codepoint() {
+        // Invalid Unicode code point (> U+10FFFF)
+        let result = unescape_unicode("\\u{110000}");
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_unescape_unicode_invalid_hex() {
+        // Invalid hex characters
+        let result = unescape_unicode("\\u{GGGG}");
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_unescape_unicode_incomplete_sequence() {
+        // Incomplete escape sequence
+        let result = unescape_unicode("\\u{123");
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_unescape_unicode_empty_hex() {
+        // Empty hex sequence
+        let result = unescape_unicode("\\u{}");
+        assert_eq!(result, "�");
+    }
+
+    #[test]
+    fn test_unescape_unicode_not_escape() {
+        // Not a unicode escape
+        let result = unescape_unicode("\\x41");
+        assert_eq!(result, "\\x41");
+    }
+
+    #[test]
+    fn test_unescape_unicode_backslash_at_end() {
+        // Backslash at end of string
+        let result = unescape_unicode("test\\");
+        assert_eq!(result, "test\\");
+    }
+
+    #[test]
+    fn test_unescape_unicode_mixed_with_text() {
+        // Mixed with regular text
+        let result = unescape_unicode("Hello \\u{1F363} World");
+        assert_eq!(result, "Hello 🍣 World");
+    }
+
+    #[test]
+    fn test_unescape_unicode_multiple_formats() {
+        // Mix of \u{} and \u formats
+        let result = unescape_unicode("\\u{41}\\u0042\\u{1F363}");
+        assert_eq!(result, "AB🍣");
+    }
+
+    // Roundtrip tests
+    #[test]
+    fn test_escape_unescape_roundtrip() {
+        let original = "🍣🍺漢字ABC";
+        let escaped = escape_unicode(original);
+        let unescaped = unescape_unicode(&escaped);
+        assert_eq!(original, unescaped);
+    }
+
+    #[test]
+    fn test_escape_unescape_roundtrip_complex() {
+        let original = "Hello 世界! 🍣🍺 Test";
+        let escaped = escape_unicode(original);
+        let unescaped = unescape_unicode(&escaped);
+        assert_eq!(original, unescaped);
+    }
+
+    #[test]
+    fn test_escape_unescape_roundtrip_empty() {
+        let original = "";
+        let escaped = escape_unicode(original);
+        let unescaped = unescape_unicode(&escaped);
+        assert_eq!(original, unescaped);
+    }
+
+    // Tests for escape_unicode_with_format function
+    #[test]
+    fn test_escape_unicode_with_format_default() {
+        let result = escape_unicode_with_format("🍣🍺", EscapeFormat::Default);
+        assert_eq!(result, "\\u{1F363}\\u{1F37A}");
+    }
+
+    #[test]
+    fn test_escape_unicode_with_format_json() {
+        let result = escape_unicode_with_format("🍣🍺", EscapeFormat::Json);
+        assert_eq!(result, "\\uD83C\\uDF63\\uD83C\\uDF7A");
+    }
+
+    #[test]
+    fn test_escape_unicode_with_format_json_bmp() {
+        // BMP characters should not use surrogate pairs
+        let result = escape_unicode_with_format("ABC漢字", EscapeFormat::Json);
+        assert_eq!(result, "\\u0041\\u0042\\u0043\\u6F22\\u5B57");
+    }
+
+    #[test]
+    fn test_escape_unicode_with_format_json_mixed() {
+        let result = escape_unicode_with_format("A🍣B", EscapeFormat::Json);
+        assert_eq!(result, "\\u0041\\uD83C\\uDF63\\u0042");
+    }
+
+    #[test]
+    fn test_escape_unicode_with_format_json_empty() {
+        let result = escape_unicode_with_format("", EscapeFormat::Json);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_escape_unicode_with_format_json_complex_emoji() {
+        // Test with various emoji that require surrogate pairs
+        let result = escape_unicode_with_format("😀😁😂", EscapeFormat::Json);
+        assert_eq!(result, "\\uD83D\\uDE00\\uD83D\\uDE01\\uD83D\\uDE02");
+    }
+
+    // JSON format roundtrip tests
+    #[test]
+    fn test_json_format_roundtrip_emoji() {
+        let original = "🍣🍺";
+        let escaped = escape_unicode_with_format(original, EscapeFormat::Json);
+        let unescaped = unescape_unicode(&escaped);
+        assert_eq!(original, unescaped);
+    }
+
+    #[test]
+    fn test_json_format_roundtrip_mixed() {
+        let original = "Hello 🍣 World!";
+        let escaped = escape_unicode_with_format(original, EscapeFormat::Json);
+        let unescaped = unescape_unicode(&escaped);
+        assert_eq!(original, unescaped);
+    }
+
+    #[test]
+    fn test_json_format_roundtrip_bmp_only() {
+        let original = "Hello 漢字 World!";
+        let escaped = escape_unicode_with_format(original, EscapeFormat::Json);
+        let unescaped = unescape_unicode(&escaped);
+        assert_eq!(original, unescaped);
+    }
+
+    // Test specific surrogate pair calculation
+    #[test]
+    fn test_surrogate_pair_calculation() {
+        // U+1F363 (🍣) should become D83C DF63
+        let result = escape_unicode_with_format("🍣", EscapeFormat::Json);
+        assert_eq!(result, "\\uD83C\\uDF63");
+        
+        // U+1F37A (🍺) should become D83C DF7A  
+        let result = escape_unicode_with_format("🍺", EscapeFormat::Json);
+        assert_eq!(result, "\\uD83C\\uDF7A");
+    }
+
+    #[test]
+    fn test_bmp_boundary_characters() {
+        // Test characters at BMP boundary (U+FFFF)
+        let result = escape_unicode_with_format("\u{FFFF}", EscapeFormat::Json);
+        assert_eq!(result, "\\uFFFF");
+        
+        // Test first supplementary character (U+10000)
+        let result = escape_unicode_with_format("\u{10000}", EscapeFormat::Json);
+        assert_eq!(result, "\\uD800\\uDC00");
     }
 }

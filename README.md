@@ -42,6 +42,12 @@ mojibox hex2bin "F09F8DA3"
 
 # Scrub invalid UTF-8 sequences
 mojibox scrub --input-format hex "F09F8D"
+
+# Escape string to Unicode escape sequences
+mojibox escape "🍣🍺"
+
+# Unescape Unicode escape sequences
+mojibox unescape '\u{1F363}\u{1F37A}'
 ```
 
 ### Command Options
@@ -75,6 +81,15 @@ mojibox scrub --input-format hex "F09F8D"
 - `--input-format`: Input format
   - `binary` - Binary data format (default)
   - `hex` - Hexadecimal format
+
+#### escape command
+- `--format`, `-f`: Output format
+  - `default` - Default \u{XXXX} format (default)
+  - `json` - JSON-compatible \uXXXX format with surrogate pairs
+
+#### unescape command
+- Automatically detects and handles both \u{XXXX} and \uXXXX formats
+- Properly processes UTF-16 surrogate pairs
 
 ### Examples
 
@@ -226,6 +241,37 @@ $ mojibox scrub --input-format hex "48656C6C6F FF 576F726C64"
 Hello�World
 ```
 
+#### Unicode Escape and Unescape
+```bash
+# Escape string to Unicode escape sequences (default format)
+$ mojibox escape "🍣🍺"
+\u{1F363}\u{1F37A}
+
+# Escape string to JSON-compatible format with surrogate pairs
+$ mojibox escape --format json "🍣🍺"
+\uD83C\uDF63\uD83C\uDF7A
+
+# Unescape Unicode escape sequences
+$ mojibox unescape '\u{1F363}\u{1F37A}'
+🍣🍺
+
+# Unescape JSON-compatible format (surrogate pairs)
+$ mojibox unescape '\uD83C\uDF63\uD83C\uDF7A'
+🍣🍺
+
+# Handle invalid escape sequences (replaced with replacement character)
+$ mojibox unescape '\uD83C'
+�
+
+# Handle reversed surrogate pairs
+$ mojibox unescape '\uDF63\uD83C'
+��
+
+# Handle out-of-range Unicode code points
+$ mojibox unescape '\u{110000}'
+�
+```
+
 ## Features
 
 - **Accurate Unicode handling**: Uses ICU4X for precise grapheme cluster segmentation
@@ -234,6 +280,8 @@ Hello�World
 - **Unicode analysis**: Comprehensive dump command for analyzing Unicode structure with multiple output formats
 - **Binary/Hex conversion**: Convert strings to hexadecimal representation and back with multiple output formats
 - **UTF-8 validation and repair**: Scrub invalid UTF-8 sequences and replace them with replacement characters
+- **Unicode escape/unescape**: Convert strings to Unicode escape sequences with support for both default and JSON-compatible formats
+- **Surrogate pair handling**: Proper processing of UTF-16 surrogate pairs with error handling for invalid sequences
 - **Command-line interface**: Simple and intuitive CLI with clap argument parsing
 
 ## Development

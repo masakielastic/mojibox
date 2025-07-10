@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat, ord_characters, chr_from_codepoints, bin2hex, hex2bin, HexFormat as LibHexFormat, scrub_invalid_utf8, InputFormat as LibInputFormat};
+use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat, ord_characters, chr_from_codepoints, bin2hex, hex2bin, HexFormat as LibHexFormat, scrub_invalid_utf8, InputFormat as LibInputFormat, escape_unicode_with_format, unescape_unicode, EscapeFormat as LibEscapeFormat};
 
 #[derive(Parser)]
 #[command(name = "mojibox")]
@@ -125,6 +125,20 @@ enum Commands {
         /// Input data to scrub
         input: String,
     },
+    /// Escape string to Unicode escape sequences
+    Escape {
+        /// Output format
+        #[arg(short, long, default_value = "default")]
+        format: EscapeFormat,
+        
+        /// Input string to escape
+        input: String,
+    },
+    /// Unescape Unicode escape sequences to string
+    Unescape {
+        /// Input string with escape sequences to unescape
+        input: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -171,6 +185,14 @@ enum InputFormat {
     Binary,
     /// Hexadecimal format
     Hex,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum EscapeFormat {
+    /// Default \u{XXXX} format
+    Default,
+    /// JSON-compatible \uXXXX format (with surrogate pairs)
+    Json,
 }
 
 fn main() -> Result<()> {
@@ -224,6 +246,12 @@ fn main() -> Result<()> {
         }
         Commands::Scrub { input_format, input } => {
             handle_scrub(input_format, input)?;
+        }
+        Commands::Escape { format, input } => {
+            handle_escape(format, input)?;
+        }
+        Commands::Unescape { input } => {
+            handle_unescape(input)?;
         }
     }
 
@@ -346,6 +374,22 @@ fn handle_scrub(input_format: InputFormat, input: String) -> Result<()> {
         InputFormat::Hex => LibInputFormat::Hex,
     };
     let result = scrub_invalid_utf8(&input, lib_format)?;
+    println!("{}", result);
+    Ok(())
+}
+
+fn handle_escape(format: EscapeFormat, input: String) -> Result<()> {
+    let lib_format = match format {
+        EscapeFormat::Default => LibEscapeFormat::Default,
+        EscapeFormat::Json => LibEscapeFormat::Json,
+    };
+    let result = escape_unicode_with_format(&input, lib_format);
+    println!("{}", result);
+    Ok(())
+}
+
+fn handle_unescape(input: String) -> Result<()> {
+    let result = unescape_unicode(&input);
     println!("{}", result);
     Ok(())
 }
