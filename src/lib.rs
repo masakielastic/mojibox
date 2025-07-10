@@ -192,6 +192,45 @@ fn format_jsonl_output(clusters: &[ClusterInfo]) -> Result<String> {
     Ok(output)
 }
 
+pub fn ord_characters(input: &str, lowercase: bool, no_prefix: bool) -> Vec<String> {
+    input.chars().map(|ch| {
+        let codepoint = ch as u32;
+        if no_prefix {
+            if lowercase {
+                format!("{:x}", codepoint)
+            } else {
+                format!("{:X}", codepoint)
+            }
+        } else {
+            if lowercase {
+                format!("0x{:x}", codepoint)
+            } else {
+                format!("0x{:X}", codepoint)
+            }
+        }
+    }).collect()
+}
+
+pub fn chr_from_codepoints(codepoints: &[String]) -> Result<String> {
+    let mut result = String::new();
+    
+    for cp_str in codepoints {
+        let hex_str = cp_str.strip_prefix("0x")
+            .or_else(|| cp_str.strip_prefix("0X"))
+            .unwrap_or(cp_str);
+            
+        let codepoint = u32::from_str_radix(hex_str, 16)
+            .map_err(|_| anyhow::anyhow!("Invalid hex format: {}", cp_str))?;
+            
+        let ch = char::from_u32(codepoint)
+            .ok_or_else(|| anyhow::anyhow!("Invalid Unicode codepoint: U+{:X}", codepoint))?;
+            
+        result.push(ch);
+    }
+    
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +413,92 @@ mod tests {
     fn test_drop_units_empty_string() {
         let result = drop_units("", ProcessingMode::Grapheme, 5).unwrap();
         assert_eq!(result, Vec::<String>::new());
+    }
+
+    // Tests for ord_characters function
+    #[test]
+    fn test_ord_default_format() {
+        let result = ord_characters("漢字🍺", false, false);
+        assert_eq!(result, vec!["0x6F22", "0x5B57", "0x1F37A"]);
+    }
+
+    #[test]
+    fn test_ord_lowercase() {
+        let result = ord_characters("漢字🍺", true, false);
+        assert_eq!(result, vec!["0x6f22", "0x5b57", "0x1f37a"]);
+    }
+
+    #[test]
+    fn test_ord_no_prefix() {
+        let result = ord_characters("漢字🍺", false, true);
+        assert_eq!(result, vec!["6F22", "5B57", "1F37A"]);
+    }
+
+    #[test]
+    fn test_ord_lowercase_no_prefix() {
+        let result = ord_characters("漢字🍺", true, true);
+        assert_eq!(result, vec!["6f22", "5b57", "1f37a"]);
+    }
+
+    #[test]
+    fn test_ord_ascii() {
+        let result = ord_characters("ABC", false, false);
+        assert_eq!(result, vec!["0x41", "0x42", "0x43"]);
+    }
+
+    #[test]
+    fn test_ord_empty_input() {
+        let result = ord_characters("", false, false);
+        assert_eq!(result, Vec::<String>::new());
+    }
+
+    // Tests for chr_from_codepoints function
+    #[test]
+    fn test_chr_with_0x_prefix() {
+        let result = chr_from_codepoints(&["0x6f22".to_string(), "0x5b57".to_string(), "0x1f37a".to_string()]).unwrap();
+        assert_eq!(result, "漢字🍺");
+    }
+
+    #[test]
+    fn test_chr_without_prefix() {
+        let result = chr_from_codepoints(&["6F22".to_string(), "5B57".to_string(), "1F37A".to_string()]).unwrap();
+        assert_eq!(result, "漢字🍺");
+    }
+
+    #[test]
+    fn test_chr_mixed_case() {
+        let result = chr_from_codepoints(&["0x6F22".to_string(), "5b57".to_string(), "1f37a".to_string()]).unwrap();
+        assert_eq!(result, "漢字🍺");
+    }
+
+    #[test]
+    fn test_chr_ascii() {
+        let result = chr_from_codepoints(&["0x41".to_string(), "0x42".to_string(), "0x43".to_string()]).unwrap();
+        assert_eq!(result, "ABC");
+    }
+
+    #[test]
+    fn test_chr_invalid_hex() {
+        let result = chr_from_codepoints(&["0xGGGG".to_string()]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_chr_invalid_codepoint() {
+        let result = chr_from_codepoints(&["0x110000".to_string()]); // > U+10FFFF
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_chr_empty_input() {
+        let result = chr_from_codepoints(&[]).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_chr_uppercase_prefix() {
+        let result = chr_from_codepoints(&["0X41".to_string(), "0X42".to_string()]).unwrap();
+        assert_eq!(result, "AB");
     }
 
     // Complex Unicode tests

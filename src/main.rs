@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat};
+use mojibox::{iter_byte, iter_codepoint, iter_grapheme_icu4x, count_units, take_units, drop_units, ProcessingMode as LibProcessingMode, dump_graphemes, DumpFormat, ord_characters, chr_from_codepoints};
 
 #[derive(Parser)]
 #[command(name = "mojibox")]
@@ -80,6 +80,24 @@ enum Commands {
         /// Input string to process
         input: String,
     },
+    /// Convert characters to Unicode codepoints
+    Ord {
+        /// Use lowercase hex format
+        #[arg(long)]
+        lower: bool,
+        
+        /// Output without 0x prefix
+        #[arg(long)]
+        no_0x: bool,
+        
+        /// Input string to process
+        input: String,
+    },
+    /// Convert Unicode codepoints to characters  
+    Chr {
+        /// Unicode codepoints in hex format (with or without 0x prefix)
+        codepoints: Vec<String>,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -146,6 +164,12 @@ fn main() -> Result<()> {
         }
         Commands::Dump { format, input } => {
             handle_dump(format, input)?;
+        }
+        Commands::Ord { lower, no_0x, input } => {
+            handle_ord(lower, no_0x, input)?;
+        }
+        Commands::Chr { codepoints } => {
+            handle_chr(codepoints)?;
         }
     }
 
@@ -230,5 +254,17 @@ fn handle_dump(format: OutputFormat, input: String) -> Result<()> {
     let dump_format = convert_format(format);
     let output = dump_graphemes(&input, dump_format)?;
     print!("{}", output);
+    Ok(())
+}
+
+fn handle_ord(lower: bool, no_0x: bool, input: String) -> Result<()> {
+    let codepoints = ord_characters(&input, lower, no_0x);
+    println!("{}", codepoints.join(" "));
+    Ok(())
+}
+
+fn handle_chr(codepoints: Vec<String>) -> Result<()> {
+    let result = chr_from_codepoints(&codepoints)?;
+    println!("{}", result);
     Ok(())
 }
